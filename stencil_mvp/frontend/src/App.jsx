@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 
 const API_URL = 'http://localhost:8000'
@@ -11,7 +11,76 @@ function App() {
   const [fontSize, setFontSize] = useState(40)
   const [margin, setMargin] = useState(10)
   const [loading, setLoading] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const debounceTimer = useRef(null)
+
+  // Debounced preview update
+  useEffect(() => {
+    // Clear previous timer
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current)
+    }
+
+    // Set new timer
+    debounceTimer.current = setTimeout(async () => {
+      if (!text.trim()) {
+        setPreviewUrl(null)
+        return
+      }
+
+      setPreviewLoading(true)
+      try {
+        const response = await fetch(`${API_URL}/preview`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: text.trim(),
+            width,
+            height,
+            thickness,
+            font_size: fontSize,
+            margin,
+          }),
+        })
+
+        if (response.ok) {
+          const blob = await response.blob()
+          const url = window.URL.createObjectURL(blob)
+          // Clean up old preview URL
+          setPreviewUrl(prev => {
+            if (prev) {
+              window.URL.revokeObjectURL(prev)
+            }
+            return url
+          })
+        }
+      } catch (err) {
+        console.error('Error fetching preview:', err)
+      } finally {
+        setPreviewLoading(false)
+      }
+    }, 500) // 500ms debounce
+
+    // Cleanup
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current)
+      }
+    }
+  }, [text, width, height, fontSize, margin, thickness])
+
+  // Cleanup preview URL on unmount
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        window.URL.revokeObjectURL(previewUrl)
+      }
+    }
+  }, [previewUrl])
 
   const handleGenerate = async () => {
     if (!text.trim()) {
@@ -65,6 +134,22 @@ function App() {
       <div className="container">
         <h1>3D Printable Stencil Generator</h1>
         <p className="subtitle">Generate STL files for spray painting stencils</p>
+
+        {/* Preview Section */}
+        <div className="preview-section">
+          <h2>Preview</h2>
+          {previewLoading ? (
+            <div className="preview-loading">Generating preview...</div>
+          ) : previewUrl ? (
+            <div className="preview-container">
+              <img src={previewUrl} alt="Stencil preview" className="preview-image" />
+            </div>
+          ) : (
+            <div className="preview-placeholder">
+              Enter text above to see preview
+            </div>
+          )}
+        </div>
 
         <div className="form">
           <div className="form-group">

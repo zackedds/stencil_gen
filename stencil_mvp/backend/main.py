@@ -3,7 +3,7 @@ from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
-from stencil_generator import generate_stencil_geometry
+from stencil_generator import generate_stencil_geometry, generate_preview_image
 
 app = FastAPI(title="3D Stencil Generator API")
 
@@ -29,6 +29,50 @@ class StencilRequest(BaseModel):
 @app.get("/")
 def root():
     return {"message": "3D Stencil Generator API"}
+
+
+@app.post("/preview")
+async def preview_stencil(request: StencilRequest):
+    """
+    Generate a 2D preview image of the stencil from above.
+    """
+    try:
+        # Validate text input
+        if not request.text or not request.text.strip():
+            raise HTTPException(status_code=400, detail="Text cannot be empty")
+        
+        # Get font path (relative to this file)
+        font_path = Path(__file__).parent / "fonts" / "AllertaStencil-Regular.ttf"
+        
+        if not font_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Font file not found at {font_path}. Please ensure the font file is in the fonts/ directory."
+            )
+        
+        # Generate preview image
+        image_bytes = generate_preview_image(
+            text=request.text.strip(),
+            font_path=str(font_path),
+            font_size=request.font_size,
+            width=request.width,
+            height=request.height,
+            margin=request.margin
+        )
+        
+        # Return as PNG image
+        return Response(
+            content=image_bytes,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-cache"
+            }
+        )
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating preview: {str(e)}")
 
 
 @app.post("/generate-stl")
