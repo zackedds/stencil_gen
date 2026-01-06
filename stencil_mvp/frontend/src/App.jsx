@@ -15,6 +15,76 @@ function App() {
   const [error, setError] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const debounceTimer = useRef(null)
+  const autoSizeTimer = useRef(null)
+  const [autoSizing, setAutoSizing] = useState(true)
+
+  // Auto-calculate optimal dimensions when text, fontSize, or margin changes
+  useEffect(() => {
+    if (!autoSizing || !text.trim()) {
+      return
+    }
+
+    // Clear previous timer
+    if (autoSizeTimer.current) {
+      clearTimeout(autoSizeTimer.current)
+    }
+
+    // Set new timer
+    autoSizeTimer.current = setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_URL}/calculate-dimensions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: text.trim(),
+            font_size: fontSize,
+            margin,
+          }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          setWidth(Math.round(data.width))
+          setHeight(Math.round(data.height))
+        }
+      } catch (err) {
+        console.error('Error calculating dimensions:', err)
+      }
+    }, 300) // 300ms debounce
+
+    // Cleanup
+    return () => {
+      if (autoSizeTimer.current) {
+        clearTimeout(autoSizeTimer.current)
+      }
+    }
+  }, [text, fontSize, margin, autoSizing])
+
+  // Initial dimension calculation on mount
+  useEffect(() => {
+    if (autoSizing && text.trim()) {
+      fetch(`${API_URL}/calculate-dimensions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: text.trim(),
+          font_size: fontSize,
+          margin,
+        }),
+      })
+        .then(response => response.json())
+        .then(data => {
+          setWidth(Math.round(data.width))
+          setHeight(Math.round(data.height))
+        })
+        .catch(err => console.error('Error calculating initial dimensions:', err))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run on mount
 
   // Debounced preview update
   useEffect(() => {
@@ -165,9 +235,20 @@ function App() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="width">
-              Width: {width} mm
-            </label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <label htmlFor="width">
+                Width: {width} mm
+              </label>
+              <label style={{ fontSize: '0.85rem', fontWeight: 'normal', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={autoSizing}
+                  onChange={(e) => setAutoSizing(e.target.checked)}
+                  style={{ marginRight: '6px' }}
+                />
+                Auto-size
+              </label>
+            </div>
             <input
               id="width"
               type="range"
@@ -175,7 +256,10 @@ function App() {
               max="200"
               step="1"
               value={width}
-              onChange={(e) => setWidth(Number(e.target.value))}
+              onChange={(e) => {
+                setWidth(Number(e.target.value))
+                setAutoSizing(false) // Disable auto-sizing when manually adjusted
+              }}
             />
           </div>
 
@@ -190,7 +274,10 @@ function App() {
               max="150"
               step="1"
               value={height}
-              onChange={(e) => setHeight(Number(e.target.value))}
+              onChange={(e) => {
+                setHeight(Number(e.target.value))
+                setAutoSizing(false) // Disable auto-sizing when manually adjusted
+              }}
             />
           </div>
 

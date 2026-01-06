@@ -3,7 +3,7 @@ from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
-from stencil_generator import generate_stencil_geometry, generate_preview_image
+from stencil_generator import generate_stencil_geometry, generate_preview_image, calculate_optimal_plate_size
 
 app = FastAPI(title="3D Stencil Generator API")
 
@@ -26,9 +26,50 @@ class StencilRequest(BaseModel):
     margin: float = 10.0
 
 
+class DimensionsRequest(BaseModel):
+    text: str
+    font_size: float = 40.0
+    margin: float = 10.0
+
+
 @app.get("/")
 def root():
     return {"message": "3D Stencil Generator API"}
+
+
+@app.post("/calculate-dimensions")
+async def calculate_dimensions(request: DimensionsRequest):
+    """
+    Calculate optimal plate dimensions for given text.
+    """
+    try:
+        # Validate text input
+        if not request.text or not request.text.strip():
+            raise HTTPException(status_code=400, detail="Text cannot be empty")
+        
+        # Get font path (relative to this file)
+        font_path = Path(__file__).parent / "fonts" / "AllertaStencil-Regular.ttf"
+        
+        if not font_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Font file not found at {font_path}. Please ensure the font file is in the fonts/ directory."
+            )
+        
+        # Calculate optimal dimensions
+        width, height = calculate_optimal_plate_size(
+            text=request.text.strip(),
+            font_path=str(font_path),
+            font_size=request.font_size,
+            margin=request.margin
+        )
+        
+        return {"width": width, "height": height}
+    
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating dimensions: {str(e)}")
 
 
 @app.post("/preview")

@@ -95,6 +95,39 @@ def generate_stencil_geometry(text, font_path, font_size, width, height, margin,
     return mesh
 
 
+def calculate_text_dimensions(text, font_path, font_size):
+    """
+    Calculate the dimensions of text without creating the full geometry.
+    Returns (text_width, text_height) in the same units as font_size.
+    """
+    prop = FontProperties(fname=font_path) if font_path else None
+    tpath = TextPath((0, 0), text, size=font_size, prop=prop)
+    
+    extents = tpath.get_extents()
+    text_width = extents.width
+    text_height = extents.height
+    
+    return text_width, text_height
+
+
+def calculate_optimal_plate_size(text, font_path, font_size, margin):
+    """
+    Calculate optimal plate dimensions based on text size and margin.
+    Returns (width, height) that will fit the text with proper margins.
+    """
+    text_width, text_height = calculate_text_dimensions(text, font_path, font_size)
+    
+    # Add margin on all sides
+    width = text_width + (margin * 2)
+    height = text_height + (margin * 2)
+    
+    # Round up to nearest 5mm for cleaner dimensions
+    width = ((int(width) // 5) + 1) * 5
+    height = ((int(height) // 5) + 1) * 5
+    
+    return width, height
+
+
 def generate_stencil_2d_geometry(text, font_path, font_size, width, height, margin):
     """
     Generate 2D stencil geometry (without 3D extrusion) for preview.
@@ -219,7 +252,7 @@ def generate_preview_image(text, font_path, font_size, width, height, margin):
     # Set axis limits with some padding
     ax.set_xlim(-5, width + 5)
     ax.set_ylim(-5, height + 5)
-    ax.invert_yaxis()  # Match typical image coordinates
+    # Don't invert y-axis - we want to see from the top (printing side)
     
     # Add labels
     ax.set_xlabel('Width (mm)', fontsize=10)
