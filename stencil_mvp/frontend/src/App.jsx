@@ -1,196 +1,279 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 
 const API_URL = 'http://localhost:8000'
 
+const PRESETS = [
+  { name: 'Auto', width: null, height: null },
+  { name: 'Playing Card', width: 88, height: 63 },
+  { name: 'Index Card', width: 127, height: 76 },
+  { name: 'Badge', width: 85, height: 55 },
+  { name: 'Bookmark', width: 150, height: 50 },
+]
+
+const PRINTERS = [
+  { name: 'Bambu Lab A1 Mini', bedW: 180, bedH: 180 },
+  { name: 'Bambu Lab A1', bedW: 256, bedH: 256 },
+  { name: 'Bambu Lab P1S / X1C', bedW: 256, bedH: 256 },
+  { name: 'Ender 3 / Pro / V2', bedW: 220, bedH: 220 },
+  { name: 'Ender 3 S1', bedW: 220, bedH: 220 },
+  { name: 'Ender 5', bedW: 220, bedH: 220 },
+  { name: 'Prusa MK3S+', bedW: 250, bedH: 210 },
+  { name: 'Prusa Mini+', bedW: 180, bedH: 180 },
+  { name: 'Anycubic Kobra 2', bedW: 220, bedH: 220 },
+  { name: 'Elegoo Neptune 3', bedW: 220, bedH: 220 },
+  { name: 'Artillery Sidewinder X2', bedW: 300, bedH: 300 },
+]
+
+function BedPreview({ stencilW, stencilH, bedW, bedH }) {
+  const maxDisplay = 240
+  const scale = Math.min(maxDisplay / bedW, maxDisplay / bedH)
+  const dW = bedW * scale
+  const dH = bedH * scale
+  const sW = stencilW * scale
+  const sH = stencilH * scale
+  const fits = stencilW <= bedW && stencilH <= bedH
+
+  return (
+    <div className="bed-preview-wrap">
+      <svg width={dW + 2} height={dH + 2} viewBox={`-1 -1 ${dW + 2} ${dH + 2}`}>
+        {/* Bed */}
+        <rect x="0" y="0" width={dW} height={dH}
+          fill="#f0f0f0" stroke="#ccc" strokeWidth="1" rx="4" />
+        {/* Grid lines */}
+        {Array.from({ length: Math.floor(bedW / 50) }, (_, i) => (
+          <line key={`v${i}`} x1={(i + 1) * 50 * scale} y1="0"
+            x2={(i + 1) * 50 * scale} y2={dH} stroke="#e0e0e0" strokeWidth="0.5" />
+        ))}
+        {Array.from({ length: Math.floor(bedH / 50) }, (_, i) => (
+          <line key={`h${i}`} x1="0" y1={(i + 1) * 50 * scale}
+            x2={dW} y2={(i + 1) * 50 * scale} stroke="#e0e0e0" strokeWidth="0.5" />
+        ))}
+        {/* Stencil — centered on bed */}
+        <rect
+          x={Math.max(0, (dW - sW) / 2)} y={Math.max(0, (dH - sH) / 2)}
+          width={Math.min(sW, dW)} height={Math.min(sH, dH)}
+          fill={fits ? 'rgba(74,108,247,0.25)' : 'rgba(220,38,38,0.2)'}
+          stroke={fits ? '#4a6cf7' : '#dc2626'}
+          strokeWidth="2" rx="2"
+        />
+        {/* Label on stencil */}
+        <text
+          x={dW / 2} y={dH / 2}
+          textAnchor="middle" dominantBaseline="central"
+          fontSize="11" fill={fits ? '#4a6cf7' : '#dc2626'} fontWeight="600"
+        >
+          {stencilW}x{stencilH}mm
+        </text>
+      </svg>
+      <div className="bed-label">{bedW}x{bedH}mm bed</div>
+    </div>
+  )
+}
+
 function App() {
-  const [text, setText] = useState('ALEX')
+  const [text, setText] = useState('HELLO')
   const [width, setWidth] = useState(100)
   const [height, setHeight] = useState(50)
   const [thickness, setThickness] = useState(0.8)
   const [fontSize, setFontSize] = useState(40)
   const [margin, setMargin] = useState(10)
+  const [hangingHole, setHangingHole] = useState(true)
+  const [holeDiameter, setHoleDiameter] = useState(5)
+  const [activePreset, setActivePreset] = useState('Auto')
   const [loading, setLoading] = useState(false)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
-  const debounceTimer = useRef(null)
-  const autoSizeTimer = useRef(null)
-  const [autoSizing, setAutoSizing] = useState(true)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [cornerRadius, setCornerRadius] = useState(3)
+  const [unit, setUnit] = useState('mm')
+  const [supportedChars, setSupportedChars] = useState(null)
+  const [charWarning, setCharWarning] = useState(null)
+  const [showBedCheck, setShowBedCheck] = useState(false)
+  const [selectedPrinter, setSelectedPrinter] = useState(PRINTERS[0])
 
-  // Auto-calculate optimal dimensions when text, fontSize, or margin changes
+  const previewTimer = useRef(null)
+  const autoSizeTimer = useRef(null)
+
+  // Fetch supported characters on mount
   useEffect(() => {
-    if (!autoSizing || !text.trim()) {
+    fetch(`${API_URL}/supported-characters`)
+      .then(res => res.json())
+      .then(data => setSupportedChars(new Set(data.characters.split(''))))
+      .catch(() => {})
+  }, [])
+
+  // Filter text input to only supported characters
+  const handleTextChange = (rawValue) => {
+    const upper = rawValue.toUpperCase()
+    if (!supportedChars) {
+      setText(upper)
+      setCharWarning(null)
       return
     }
 
-    // Clear previous timer
-    if (autoSizeTimer.current) {
-      clearTimeout(autoSizeTimer.current)
-    }
-
-    // Set new timer
-    autoSizeTimer.current = setTimeout(async () => {
-      try {
-        const response = await fetch(`${API_URL}/calculate-dimensions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: text.trim(),
-            font_size: fontSize,
-            margin,
-          }),
-        })
-
-        if (response.ok) {
-          const data = await response.json()
-          setWidth(Math.round(data.width))
-          setHeight(Math.round(data.height))
-        }
-      } catch (err) {
-        console.error('Error calculating dimensions:', err)
-      }
-    }, 300) // 300ms debounce
-
-    // Cleanup
-    return () => {
-      if (autoSizeTimer.current) {
-        clearTimeout(autoSizeTimer.current)
+    const filtered = []
+    const rejected = new Set()
+    for (const ch of upper) {
+      if (supportedChars.has(ch) || supportedChars.has(ch.toLowerCase())) {
+        filtered.push(ch)
+      } else {
+        rejected.add(ch)
       }
     }
-  }, [text, fontSize, margin, autoSizing])
 
-  // Initial dimension calculation on mount
-  useEffect(() => {
-    if (autoSizing && text.trim()) {
-      fetch(`${API_URL}/calculate-dimensions`, {
+    setText(filtered.join(''))
+
+    if (rejected.size > 0) {
+      const chars = [...rejected].map(c => `"${c}"`).join(', ')
+      setCharWarning(`${chars} not available in stencil font`)
+      setTimeout(() => setCharWarning(null), 3000)
+    } else {
+      setCharWarning(null)
+    }
+  }
+
+  // Auto-size: when in Auto mode, compute plate size from text
+  const autoSize = useCallback(async () => {
+    if (activePreset !== 'Auto' || !text.trim()) return
+    try {
+      const res = await fetch(`${API_URL}/calculate-dimensions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text: text.trim(),
-          font_size: fontSize,
-          margin,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.trim(), font_size: fontSize, margin }),
       })
-        .then(response => response.json())
-        .then(data => {
-          setWidth(Math.round(data.width))
-          setHeight(Math.round(data.height))
-        })
-        .catch(err => console.error('Error calculating initial dimensions:', err))
+      if (res.ok) {
+        const data = await res.json()
+        setWidth(Math.round(data.width))
+        setHeight(Math.round(data.height))
+      }
+    } catch (err) {
+      console.error('Auto-size error:', err)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Only run on mount
+  }, [text, fontSize, margin, activePreset])
 
-  // Debounced preview update
+  // Fit text: when a preset size is selected, compute font size to fit
+  const fitTextToPlate = useCallback(async (w, h) => {
+    if (!text.trim()) return
+    try {
+      const res = await fetch(`${API_URL}/fit-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.trim(), width: w, height: h, margin }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setFontSize(data.font_size)
+      }
+    } catch (err) {
+      console.error('Fit text error:', err)
+    }
+  }, [text, margin])
+
+  // When text or margin changes, re-fit or auto-size
+  // NOTE: fontSize is intentionally excluded — we only auto-resize when
+  // text/margin change, not when the user manually drags the font slider.
   useEffect(() => {
-    // Clear previous timer
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current)
+    if (activePreset === 'Auto') {
+      if (autoSizeTimer.current) clearTimeout(autoSizeTimer.current)
+      autoSizeTimer.current = setTimeout(autoSize, 300)
+      return () => clearTimeout(autoSizeTimer.current)
+    } else if (activePreset !== 'Custom') {
+      // Fixed-size preset: re-fit font when text changes
+      if (autoSizeTimer.current) clearTimeout(autoSizeTimer.current)
+      autoSizeTimer.current = setTimeout(() => fitTextToPlate(width, height), 300)
+      return () => clearTimeout(autoSizeTimer.current)
     }
+  }, [text, margin, activePreset, autoSize, fitTextToPlate, width, height])
 
-    // Set new timer
-    debounceTimer.current = setTimeout(async () => {
+  // Initial auto-size on mount
+  useEffect(() => {
+    autoSize()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Debounced preview
+  useEffect(() => {
+    if (previewTimer.current) clearTimeout(previewTimer.current)
+    previewTimer.current = setTimeout(async () => {
       if (!text.trim()) {
         setPreviewUrl(null)
         return
       }
-
       setPreviewLoading(true)
       try {
-        const response = await fetch(`${API_URL}/preview`, {
+        const res = await fetch(`${API_URL}/preview`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            text: text.trim(),
-            width,
-            height,
-            thickness,
-            font_size: fontSize,
-            margin,
+            text: text.trim(), width, height, thickness,
+            font_size: fontSize, margin,
+            hanging_hole: hangingHole, hole_diameter: holeDiameter,
+            corner_radius: cornerRadius,
           }),
         })
-
-        if (response.ok) {
-          const blob = await response.blob()
-          const url = window.URL.createObjectURL(blob)
-          // Clean up old preview URL
-          setPreviewUrl(prev => {
-            if (prev) {
-              window.URL.revokeObjectURL(prev)
-            }
-            return url
-          })
+        if (res.ok) {
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          setPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+          setError(null)
+        } else {
+          const err = await res.json().catch(() => ({}))
+          setError(err.detail || 'Preview failed')
         }
-      } catch (err) {
-        console.error('Error fetching preview:', err)
+      } catch {
+        setError('Cannot reach server — is the backend running?')
       } finally {
         setPreviewLoading(false)
       }
-    }, 500) // 500ms debounce
+    }, 400)
+    return () => clearTimeout(previewTimer.current)
+  }, [text, width, height, thickness, fontSize, margin, hangingHole, holeDiameter, cornerRadius])
 
-    // Cleanup
-    return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current)
-      }
-    }
-  }, [text, width, height, fontSize, margin, thickness])
-
-  // Cleanup preview URL on unmount
+  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      if (previewUrl) {
-        window.URL.revokeObjectURL(previewUrl)
-      }
-    }
+    return () => { if (previewUrl) URL.revokeObjectURL(previewUrl) }
   }, [previewUrl])
 
-  const handleGenerate = async () => {
-    if (!text.trim()) {
-      setError('Please enter some text')
-      return
+  const applyPreset = (preset) => {
+    setActivePreset(preset.name)
+    if (preset.name === 'Auto') {
+      autoSize()
+    } else {
+      setWidth(preset.width)
+      setHeight(preset.height)
+      fitTextToPlate(preset.width, preset.height)
     }
+  }
 
+  const doDownload = async () => {
+    setShowBedCheck(false)
     setLoading(true)
     setError(null)
-
     try {
-      const response = await fetch(`${API_URL}/generate-stl`, {
+      const res = await fetch(`${API_URL}/generate-stl`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: text.trim(),
-          width,
-          height,
-          thickness,
-          font_size: fontSize,
-          margin,
+          text: text.trim(), width, height, thickness,
+          font_size: fontSize, margin,
+          hanging_hole: hangingHole, hole_diameter: holeDiameter,
         }),
       })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Failed to generate STL')
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Failed to generate STL')
       }
-
-      // Get the blob and create download link
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `stencil_${text.trim()}.stl`
+      const safeName = text.trim().replace(/[^a-zA-Z0-9 _-]/g, '_') || 'stencil'
+      a.download = `stencil_${safeName}.stl`
       document.body.appendChild(a)
       a.click()
-      window.URL.revokeObjectURL(url)
+      URL.revokeObjectURL(url)
       document.body.removeChild(a)
     } catch (err) {
       setError(err.message)
@@ -199,156 +282,280 @@ function App() {
     }
   }
 
+  const handleDownloadClick = () => {
+    if (!text.trim()) { setError('Type some text first!'); return }
+    setShowBedCheck(true)
+  }
+
+  const fits = width <= selectedPrinter.bedW && height <= selectedPrinter.bedH
+
   return (
     <div className="app">
-      <div className="container">
-        <h1>3D Printable Stencil Generator</h1>
-        <p className="subtitle">Generate STL files for spray painting stencils</p>
+      <header className="header">
+        <div className="header-brand">
+          <img src="/logo-white.png" alt="SprayForge" className="header-logo" />
+          <div>
+            <h1>SprayForge</h1>
+            <p className="tagline">Type it. Print it. Spray it.</p>
+          </div>
+        </div>
+      </header>
 
-        {/* Preview Section */}
-        <div className="preview-section">
-          <h2>Preview</h2>
-          {previewLoading ? (
-            <div className="preview-loading">Generating preview...</div>
-          ) : previewUrl ? (
-            <div className="preview-container">
-              <img src={previewUrl} alt="Stencil preview" className="preview-image" />
-            </div>
+      <main className="main">
+        {/* Preview */}
+        <section className="preview-card">
+          {previewLoading && <div className="preview-spinner">Updating...</div>}
+          {previewUrl ? (
+            <img src={previewUrl} alt="Stencil preview" className="preview-img" />
           ) : (
-            <div className="preview-placeholder">
-              Enter text above to see preview
+            <div className="preview-empty">
+              {text.trim() ? 'Loading preview...' : 'Type something to get started'}
             </div>
           )}
-        </div>
+        </section>
 
-        <div className="form">
-          <div className="form-group">
-            <label htmlFor="text">Text</label>
+        {/* Controls */}
+        <section className="controls">
+          {/* Text input */}
+          <div className="field">
+            <label htmlFor="text">Your Text</label>
             <input
               id="text"
               type="text"
               value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Enter text (e.g., ALEX)"
-              maxLength={50}
+              onChange={(e) => handleTextChange(e.target.value)}
+              placeholder="e.g. ALEX"
+              maxLength={30}
+              autoFocus
             />
+            {charWarning && <div className="char-warning">{charWarning}</div>}
           </div>
 
-          <div className="form-group">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <label htmlFor="width">
-                Width: {width} mm
-              </label>
-              <label style={{ fontSize: '0.85rem', fontWeight: 'normal', cursor: 'pointer' }}>
+          {/* Presets */}
+          <div className="field">
+            <label>Size</label>
+            <div className="preset-row">
+              {PRESETS.map(p => (
+                <button
+                  key={p.name}
+                  className={`preset-btn ${activePreset === p.name ? 'active' : ''}`}
+                  onClick={() => applyPreset(p)}
+                >
+                  {p.name}
+                  {p.width && <span className="preset-dim">{p.width}x{p.height}mm</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Hanging Hole */}
+          <div className="field">
+            <div className="hole-row">
+              <label className="checkbox-label">
                 <input
                   type="checkbox"
-                  checked={autoSizing}
-                  onChange={(e) => setAutoSizing(e.target.checked)}
-                  style={{ marginRight: '6px' }}
+                  checked={hangingHole}
+                  onChange={(e) => setHangingHole(e.target.checked)}
                 />
-                Auto-size
+                <span>Hanging hole</span>
               </label>
+              {hangingHole && (
+                <select
+                  className="hole-select"
+                  value={holeDiameter}
+                  onChange={(e) => setHoleDiameter(Number(e.target.value))}
+                >
+                  <option value={3}>Small (3mm)</option>
+                  <option value={4}>Medium (4mm)</option>
+                  <option value={5}>Standard (5mm)</option>
+                  <option value={6}>Large (6mm)</option>
+                  <option value={8}>Extra Large (8mm)</option>
+                </select>
+              )}
             </div>
-            <input
-              id="width"
-              type="range"
-              min="50"
-              max="200"
-              step="1"
-              value={width}
-              onChange={(e) => {
-                setWidth(Number(e.target.value))
-                setAutoSizing(false) // Disable auto-sizing when manually adjusted
-              }}
-            />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="height">
-              Height: {height} mm
-            </label>
-            <input
-              id="height"
-              type="range"
-              min="30"
-              max="150"
-              step="1"
-              value={height}
-              onChange={(e) => {
-                setHeight(Number(e.target.value))
-                setAutoSizing(false) // Disable auto-sizing when manually adjusted
-              }}
-            />
+          {/* Font Size */}
+          <div className="field">
+            <label>Font Size: {fontSize}pt</label>
+            <div className="viz-row">
+              <div className="viz-box">
+                <span
+                  className="viz-letter"
+                  style={{ fontSize: `${10 + ((fontSize - 8) / (120 - 8)) * 18}px` }}
+                >A</span>
+              </div>
+              <input
+                type="range" min="8" max="120" step="1"
+                value={fontSize}
+                onChange={(e) => { setFontSize(Number(e.target.value)); setActivePreset('Custom') }}
+              />
+            </div>
+            <div className="range-hints">
+              <span>Small</span>
+              <span>Large</span>
+            </div>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="thickness">
-              Thickness: {thickness} mm
-            </label>
-            <input
-              id="thickness"
-              type="range"
-              min="0.5"
-              max="3.0"
-              step="0.1"
-              value={thickness}
-              onChange={(e) => setThickness(Number(e.target.value))}
-            />
+          {/* Margin */}
+          <div className="field">
+            <label>Border Margin: {margin}mm</label>
+            <div className="viz-row">
+              <div className="viz-box">
+                <div
+                  className="viz-margin-box"
+                  style={{ borderWidth: `${2 + ((margin - 3) / (30 - 3)) * 10}px` }}
+                />
+              </div>
+              <input
+                type="range" min="3" max="30" step="1"
+                value={margin}
+                onChange={(e) => setMargin(Number(e.target.value))}
+              />
+            </div>
+            <div className="range-hints">
+              <span>Tight</span>
+              <span>Wide</span>
+            </div>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="fontSize">
-              Font Size: {fontSize} pt
-            </label>
-            <input
-              id="fontSize"
-              type="range"
-              min="20"
-              max="80"
-              step="1"
-              value={fontSize}
-              onChange={(e) => setFontSize(Number(e.target.value))}
-            />
+          {/* Thickness */}
+          <div className="field">
+            <label>Thickness: {thickness}mm</label>
+            <div className="viz-row">
+              <div className="viz-box">
+                <div
+                  className="viz-thickness-bar"
+                  style={{ height: `${4 + ((thickness - 0.4) / (3 - 0.4)) * 28}px` }}
+                />
+              </div>
+              <input
+                type="range" min="0.4" max="3" step="0.1"
+                value={thickness}
+                onChange={(e) => setThickness(Number(e.target.value))}
+              />
+            </div>
+            <div className="range-hints">
+              <span>Thin (flexible)</span>
+              <span>Thick (rigid)</span>
+            </div>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="margin">
-              Margin: {margin} mm
-            </label>
-            <input
-              id="margin"
-              type="range"
-              min="5"
-              max="30"
-              step="1"
-              value={margin}
-              onChange={(e) => setMargin(Number(e.target.value))}
-            />
-          </div>
+          {/* Advanced toggle */}
+          <button
+            className="advanced-toggle"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+          >
+            {showAdvanced ? 'Hide' : 'Show'} advanced options
+          </button>
 
-          {error && (
-            <div className="error">
-              {error}
+          {showAdvanced && (
+            <div className="advanced-section">
+              <div className="field">
+                <label>Corner Rounding: {cornerRadius}mm</label>
+                <input
+                  type="range" min="0" max="15" step="1"
+                  value={cornerRadius}
+                  onChange={(e) => setCornerRadius(Number(e.target.value))}
+                />
+                <div className="range-hints">
+                  <span>Sharp</span>
+                  <span>Round</span>
+                </div>
+              </div>
+              <div className="field">
+                <div className="unit-row">
+                  <label>Units</label>
+                  <div className="unit-toggle">
+                    <button
+                      className={`unit-btn ${unit === 'mm' ? 'active' : ''}`}
+                      onClick={() => setUnit('mm')}
+                    >mm</button>
+                    <button
+                      className={`unit-btn ${unit === 'inches' ? 'active' : ''}`}
+                      onClick={() => setUnit('inches')}
+                    >inches</button>
+                  </div>
+                </div>
+              </div>
+              <div className="field">
+                <label>Width: {unit === 'inches' ? (width / 25.4).toFixed(2) + '"' : width + 'mm'}</label>
+                <input
+                  type="range" min="30" max="300" step="1"
+                  value={width}
+                  onChange={(e) => { setWidth(Number(e.target.value)); setActivePreset('Custom') }}
+                />
+              </div>
+              <div className="field">
+                <label>Height: {unit === 'inches' ? (height / 25.4).toFixed(2) + '"' : height + 'mm'}</label>
+                <input
+                  type="range" min="20" max="200" step="1"
+                  value={height}
+                  onChange={(e) => { setHeight(Number(e.target.value)); setActivePreset('Custom') }}
+                />
+              </div>
             </div>
           )}
 
-          <button
-            onClick={handleGenerate}
-            disabled={loading || !text.trim()}
-            className="generate-button"
-          >
-            {loading ? 'Generating...' : 'Download STL'}
-          </button>
-        </div>
+          {/* Error */}
+          {error && <div className="error-msg">{error}</div>}
 
-        <div className="info">
-          <p>
-            <strong>Note:</strong> This tool uses a stencil font to prevent the middle of letters 
-            (like 'O', 'A', 'P') from falling out. The generated STL file can be 3D printed and 
-            used for spray painting.
+          {/* Download */}
+          <button
+            className="download-btn"
+            onClick={handleDownloadClick}
+            disabled={loading || !text.trim()}
+          >
+            {loading ? 'Generating...' : 'Download STL File'}
+          </button>
+
+          <p className="hint">
+            Open the .stl file in your 3D printer's slicer software (like Cura or PrusaSlicer) to print.
           </p>
+        </section>
+      </main>
+
+      {/* Bed Check Modal */}
+      {showBedCheck && (
+        <div className="modal-overlay" onClick={() => setShowBedCheck(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Check Printer Fit</h2>
+            <p className="modal-subtitle">Make sure your stencil fits on the print bed</p>
+
+            <div className="modal-printer-select">
+              <label>Your Printer</label>
+              <select
+                value={selectedPrinter.name}
+                onChange={(e) => setSelectedPrinter(PRINTERS.find(p => p.name === e.target.value))}
+              >
+                {PRINTERS.map(p => (
+                  <option key={p.name} value={p.name}>
+                    {p.name} ({p.bedW}x{p.bedH}mm)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <BedPreview
+              stencilW={width} stencilH={height}
+              bedW={selectedPrinter.bedW} bedH={selectedPrinter.bedH}
+            />
+
+            <div className={`fit-badge ${fits ? 'fits' : 'no-fit'}`}>
+              {fits ? 'Fits on bed!' : 'Too large for this bed'}
+            </div>
+
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setShowBedCheck(false)}>
+                Go Back
+              </button>
+              <button className="modal-confirm" onClick={doDownload}>
+                {fits ? 'Download STL' : 'Download Anyway'}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
