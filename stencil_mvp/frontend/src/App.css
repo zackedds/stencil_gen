@@ -407,6 +407,19 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ===== Size Warning ===== */
+.size-warning {
+  font-size: 0.82rem;
+  color: #d97706;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 10px 14px;
+  border-radius: 8px;
+  text-align: center;
+  line-height: 1.4;
+  animation: fadeIn 0.2s ease;
+}
+
 /* ===== Error ===== */
 .error-msg {
   background: #fef2f2;

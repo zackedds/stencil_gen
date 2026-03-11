@@ -259,6 +259,7 @@ function App() {
           text: text.trim(), width, height, thickness,
           font_size: fontSize, margin,
           hanging_hole: hangingHole, hole_diameter: holeDiameter,
+          corner_radius: cornerRadius,
         }),
       })
       if (!res.ok) {
@@ -313,6 +314,13 @@ function App() {
             </div>
           )}
         </section>
+
+        {/* Size warning */}
+        {(width > 200 || height > 200) && (
+          <div className="size-warning">
+            Your stencil ({width}x{height}mm) may be too large for most 3D printers. Common print beds are around 220x220mm.
+          </div>
+        )}
 
         {/* Controls */}
         <section className="controls">

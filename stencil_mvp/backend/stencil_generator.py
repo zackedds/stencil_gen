@@ -21,43 +21,42 @@ def get_supported_characters(font_path):
     import string
     candidates = (
         string.ascii_uppercase + string.ascii_lowercase + string.digits
-        + " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+        + "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+        + "€£¥¢—–×÷¡¿"
+        + "ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖÙÚÛÜÝÞ"
+        + "àáâãäåçèéêëìíîïðñòóôõöùúûüýþÿ"
     )
     prop = FontProperties(fname=font_path) if font_path else None
-    supported = []
+    supported = [' ']
+
+    # Baseline: geometry for just "AA" (used to detect if a char adds geometry)
+    try:
+        baseline = TextPath((0, 0), "AA", size=40, prop=prop)
+        baseline_codes = len(baseline.codes) if baseline.codes is not None else 0
+    except Exception:
+        baseline_codes = 0
+
     for ch in candidates:
         try:
+            # First try the character alone
             tp = TextPath((0, 0), ch, size=40, prop=prop)
-            if tp.codes is None or len(tp.codes) == 0:
-                continue
-            ext = tp.get_extents()
-            # Space has no extents but is valid
-            if ch == ' ' or (ext.width > 0 and ext.height > 0):
-                # Verify it can become a polygon without crashing
-                codes = tp.codes
-                verts = tp.vertices
-                path_polygons = []
-                curr_poly = []
-                for i, code in enumerate(codes):
-                    if code == tp.MOVETO:
-                        if curr_poly:
-                            path_polygons.append(curr_poly)
-                        curr_poly = [verts[i]]
-                    elif code == tp.LINETO:
-                        curr_poly.append(verts[i])
-                    elif code == tp.CLOSEPOLY:
-                        curr_poly.append(curr_poly[0])
-                        path_polygons.append(curr_poly)
-                        curr_poly = []
-                    elif code in (tp.CURVE3, tp.CURVE4):
-                        curr_poly.append(verts[i])
-                if curr_poly:
-                    path_polygons.append(curr_poly)
-                polys = [Polygon(p).buffer(0) for p in path_polygons if len(p) >= 3]
-                if ch == ' ' or len(polys) > 0:
+            if tp.codes is not None and len(tp.codes) > 0:
+                ext = tp.get_extents()
+                if ext.width > 0 and ext.height > 0:
                     supported.append(ch)
+                    continue
+        except Exception:
+            pass
+
+        # Some chars crash alone but work embedded in strings.
+        # Test by embedding between two A's and checking if geometry changes.
+        try:
+            tp = TextPath((0, 0), "A" + ch + "A", size=40, prop=prop)
+            if tp.codes is not None and len(tp.codes) > baseline_codes:
+                supported.append(ch)
         except Exception:
             continue
+
     return "".join(supported)
 
 
