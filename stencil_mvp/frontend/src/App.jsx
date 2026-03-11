@@ -338,7 +338,7 @@ function App() {
               {PRESETS.map(p => (
                 <button
                   key={p.name}
-                  className={`preset-btn ${activePreset === p.name ? 'active' : ''}`}
+                  className={`preset-btn ${activePreset === p.name ? 'active' : ''} ${!p.width ? 'preset-btn-single' : ''}`}
                   onClick={() => applyPreset(p)}
                 >
                   {p.name}
