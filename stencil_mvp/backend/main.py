@@ -7,6 +7,7 @@ from urllib.parse import quote
 from stencil_generator import (
     generate_stencil_geometry,
     generate_preview_image,
+    generate_svg,
     calculate_optimal_plate_size,
     calculate_font_for_plate,
     get_supported_characters,
@@ -159,6 +160,39 @@ async def generate_stl(request: StencilRequest):
             media_type="application/octet-stream",
             headers={
                 "Content-Disposition": f"attachment; filename=\"stencil_{safe_name}.stl\"; filename*=UTF-8''{encoded_name}",
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/generate-svg")
+async def generate_svg_endpoint(request: StencilRequest):
+    """Generate an SVG file with laser-cutter-ready red hairline cut lines."""
+    _check_font()
+    if not request.text or not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    try:
+        svg_str = generate_svg(
+            text=request.text.strip(),
+            font_path=str(FONT_PATH),
+            font_size=request.font_size,
+            width=request.width,
+            height=request.height,
+            margin=request.margin,
+            hanging_hole=request.hanging_hole,
+            hole_diameter=request.hole_diameter,
+            corner_radius=request.corner_radius,
+        )
+        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in request.text.strip())
+        if not safe_name:
+            safe_name = "stencil"
+        encoded_name = quote(f"stencil_{safe_name}.svg")
+        return Response(
+            content=svg_str,
+            media_type="image/svg+xml",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"stencil_{safe_name}.svg\"; filename*=UTF-8''{encoded_name}",
             },
         )
     except Exception as e:

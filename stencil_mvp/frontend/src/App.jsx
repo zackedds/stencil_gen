@@ -95,6 +95,50 @@ function App() {
 
   const previewTimer = useRef(null)
   const autoSizeTimer = useRef(null)
+  const undoStack = useRef([])
+  const undoTimer = useRef(null)
+  const isUndoing = useRef(false)
+
+  // Undo: snapshot design state (debounced to batch rapid changes)
+  const getSnapshot = useCallback(() => ({
+    text, width, height, thickness, fontSize, margin,
+    hangingHole, holeDiameter, activePreset, cornerRadius, unit
+  }), [text, width, height, thickness, fontSize, margin,
+       hangingHole, holeDiameter, activePreset, cornerRadius, unit])
+
+  useEffect(() => {
+    if (isUndoing.current) { isUndoing.current = false; return }
+    if (undoTimer.current) clearTimeout(undoTimer.current)
+    undoTimer.current = setTimeout(() => {
+      const snap = getSnapshot()
+      const stack = undoStack.current
+      const last = stack[stack.length - 1]
+      if (!last || JSON.stringify(last) !== JSON.stringify(snap)) {
+        stack.push(snap)
+        if (stack.length > 50) stack.shift()
+      }
+    }, 600)
+    return () => clearTimeout(undoTimer.current)
+  }, [getSnapshot])
+
+  const undo = useCallback(() => {
+    const stack = undoStack.current
+    if (stack.length < 2) return
+    stack.pop() // remove current state
+    const prev = stack[stack.length - 1]
+    isUndoing.current = true
+    setText(prev.text)
+    setWidth(prev.width)
+    setHeight(prev.height)
+    setThickness(prev.thickness)
+    setFontSize(prev.fontSize)
+    setMargin(prev.margin)
+    setHangingHole(prev.hangingHole)
+    setHoleDiameter(prev.holeDiameter)
+    setActivePreset(prev.activePreset)
+    setCornerRadius(prev.cornerRadius)
+    setUnit(prev.unit)
+  }, [])
 
   // Fetch supported characters on mount
   useEffect(() => {
@@ -193,6 +237,20 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Ctrl+Z to undo
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        // Don't intercept when typing in text input
+        if (e.target.tagName === 'INPUT' && e.target.type === 'text') return
+        e.preventDefault()
+        undo()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [undo])
+
   // Debounced preview
   useEffect(() => {
     if (previewTimer.current) clearTimeout(previewTimer.current)
@@ -283,9 +341,58 @@ function App() {
     }
   }
 
+  const downloadSvg = async () => {
+    if (!text.trim()) { setError('Type some text first!'); return }
+    setError(null)
+    try {
+      const res = await fetch(`${API_URL}/generate-svg`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: text.trim(), width, height, thickness,
+          font_size: fontSize, margin,
+          hanging_hole: hangingHole, hole_diameter: holeDiameter,
+          corner_radius: cornerRadius,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Failed to generate SVG')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeName = text.trim().replace(/[^a-zA-Z0-9 _-]/g, '_') || 'stencil'
+      a.download = `stencil_${safeName}.svg`
+      document.body.appendChild(a)
+      a.click()
+      URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const handleDownloadClick = () => {
     if (!text.trim()) { setError('Type some text first!'); return }
     setShowBedCheck(true)
+  }
+
+  const resetToDefaults = () => {
+    setText('HELLO')
+    setThickness(0.8)
+    setFontSize(40)
+    setMargin(10)
+    setHangingHole(true)
+    setHoleDiameter(5)
+    setActivePreset('Auto')
+    setCornerRadius(3)
+    setUnit('mm')
+    setShowAdvanced(false)
+    setError(null)
+    setCharWarning(null)
+    setTimeout(autoSize, 100)
   }
 
   const fits = width <= selectedPrinter.bedW && height <= selectedPrinter.bedH
@@ -508,17 +615,38 @@ function App() {
           {/* Error */}
           {error && <div className="error-msg">{error}</div>}
 
-          {/* Download */}
-          <button
-            className="download-btn"
-            onClick={handleDownloadClick}
-            disabled={loading || !text.trim()}
-          >
-            {loading ? 'Generating...' : 'Download STL File'}
-          </button>
+          {/* Actions */}
+          <div className="action-row">
+            <button
+              className="undo-btn"
+              onClick={undo}
+              disabled={undoStack.current.length < 2}
+              title="Undo (Ctrl+Z)"
+            >
+              Undo
+            </button>
+            <button
+              className="reset-btn"
+              onClick={resetToDefaults}
+            >
+              Reset
+            </button>
+            <button
+              className="download-btn"
+              onClick={handleDownloadClick}
+              disabled={loading || !text.trim()}
+            >
+              {loading ? 'Generating...' : 'Download STL'}
+            </button>
+          </div>
 
           <p className="hint">
-            Open the .stl file in your 3D printer's slicer software (like Cura or PrusaSlicer) to print.
+            Open the .stl file in your slicer (Cura, PrusaSlicer) to 3D print.
+            <br />
+            <button className="svg-link" onClick={downloadSvg} disabled={!text.trim()}>
+              Download as SVG
+            </button>
+            {' '}for laser cutters.
           </p>
         </section>
       </main>

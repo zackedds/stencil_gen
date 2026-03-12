@@ -368,3 +368,56 @@ def generate_preview_image(text, font_path, font_size, width, height, margin,
     buf.seek(0)
     plt.close(fig)
     return buf.getvalue()
+
+
+def _shapely_to_svg_path(geom):
+    """Convert a Shapely polygon/multipolygon to SVG path data with red hairline strokes."""
+    paths = []
+
+    def _poly_to_d(poly):
+        coords = list(poly.exterior.coords)
+        d = "M " + " L ".join(f"{x:.3f},{y:.3f}" for x, y in coords) + " Z"
+        for interior in poly.interiors:
+            hole_coords = list(interior.coords)
+            d += " M " + " L ".join(f"{x:.3f},{y:.3f}" for x, y in hole_coords) + " Z"
+        return d
+
+    if isinstance(geom, MultiPolygon):
+        for g in geom.geoms:
+            paths.append(_poly_to_d(g))
+    else:
+        paths.append(_poly_to_d(geom))
+
+    return " ".join(paths)
+
+
+def generate_svg(text, font_path, font_size, width, height, margin,
+                 hanging_hole=False, hole_diameter=5.0, corner_radius=0.0):
+    """Generate an SVG with red hairline cut lines for laser cutters. Returns SVG string."""
+    stencil_2d, _, _, _ = generate_stencil_2d_geometry(
+        text, font_path, font_size, width, height, margin,
+        hanging_hole, hole_diameter, corner_radius
+    )
+
+    bounds = stencil_2d.bounds  # (minx, miny, maxx, maxy)
+    pad = 2
+    vb_x = bounds[0] - pad
+    vb_y = bounds[1] - pad
+    vb_w = (bounds[2] - bounds[0]) + pad * 2
+    vb_h = (bounds[3] - bounds[1]) + pad * 2
+
+    # Flip Y axis: SVG has Y-down, our geometry has Y-up
+    path_data = _shapely_to_svg_path(stencil_2d)
+
+    svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="{vb_w:.3f}mm" height="{vb_h:.3f}mm"
+     viewBox="{vb_x:.3f} {-(bounds[3] + pad):.3f} {vb_w:.3f} {vb_h:.3f}">
+  <g transform="scale(1,-1)">
+    <path d="{path_data}"
+          fill="none" stroke="#FF0000" stroke-width="0.01"
+          fill-rule="evenodd" />
+  </g>
+</svg>'''
+
+    return svg

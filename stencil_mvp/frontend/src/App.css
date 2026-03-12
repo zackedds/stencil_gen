@@ -430,9 +430,54 @@ body {
   border: 1px solid #fecaca;
 }
 
+/* ===== Actions ===== */
+.action-row {
+  display: flex;
+  gap: 10px;
+}
+
+.undo-btn {
+  padding: 16px 20px;
+  border: 2px solid #e4e7ec;
+  border-radius: 10px;
+  background: white;
+  color: #777;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.undo-btn:hover:not(:disabled) {
+  border-color: #aaa;
+  color: #555;
+}
+
+.undo-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.reset-btn {
+  padding: 16px 20px;
+  border: 2px solid #e4e7ec;
+  border-radius: 10px;
+  background: white;
+  color: #777;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reset-btn:hover {
+  border-color: #aaa;
+  color: #555;
+}
+
 /* ===== Download ===== */
 .download-btn {
-  width: 100%;
+  flex: 1;
   padding: 16px;
   background: #4a6cf7;
   color: white;
@@ -463,6 +508,27 @@ body {
   font-size: 0.78rem;
   color: #aaa;
   line-height: 1.5;
+}
+
+.svg-link {
+  background: none;
+  border: none;
+  color: #4a6cf7;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.svg-link:hover:not(:disabled) {
+  color: #3b5de7;
+}
+
+.svg-link:disabled {
+  color: #ccc;
+  cursor: not-allowed;
+  text-decoration: none;
 }
 
 /* ===== Modal ===== */
